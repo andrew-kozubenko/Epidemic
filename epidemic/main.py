@@ -142,3 +142,85 @@ fig.savefig('seird_model_all_methods.png')
 plt.figure(figsize=(10, 6)).savefig('seird_model_solve_ivp.png')
 
 print("Графики сохранены в файлы seird_model_all_methods.png и seird_model_solve_ivp.png")
+
+# Функции для расчета ошибок
+def calculate_errors(y_ref, y_approx, method_name):
+    """Вычисляет различные метрики ошибок"""
+    errors = {}
+
+    # Средняя абсолютная ошибка (MAE)
+    errors['MAE'] = np.mean(np.abs(y_ref - y_approx))
+
+    # Среднеквадратичная ошибка (MSE)
+    errors['MSE'] = np.mean((y_ref - y_approx) ** 2)
+
+    # Максимальная абсолютная ошибка
+    errors['MaxAE'] = np.max(np.abs(y_ref - y_approx))
+
+    # Относительная ошибка
+    nonzero_mask = y_ref != 0
+    rel_errors = np.zeros_like(y_ref)
+    rel_errors[nonzero_mask] = np.abs((y_ref[nonzero_mask] - y_approx[nonzero_mask]) / y_ref[nonzero_mask])
+    errors['MeanRE'] = np.mean(rel_errors[nonzero_mask])
+
+    print(f"\nОшибки для метода {method_name}:")
+    for metric, value in errors.items():
+        print(f"{metric}: {value:.6f}")
+
+    return errors
+
+
+# Сравнение методов с solve_ivp как с эталоном
+print("\n=== Сравнение численных методов ===")
+
+# Для каждой группы населения
+for i, group in enumerate(groups):
+    print(f"\nГруппа {group}:")
+
+    # Интерполируем решения Эйлера и РК4 к временным точкам solve_ivp
+    y_euler_interp = np.interp(sol.t, t_euler, y_euler[:, i])
+    y_rk4_interp = np.interp(sol.t, t_rk4, y_rk4[:, i])
+
+    # Вычисляем ошибки
+    euler_errors = calculate_errors(sol.y[i], y_euler_interp, "Euler")
+    rk4_errors = calculate_errors(sol.y[i], y_rk4_interp, "RK4")
+
+# Время выполнения методов
+import time
+
+print("\n=== Время выполнения ===")
+start = time.time()
+_, _ = euler_method(seir_d_model, initial_conditions, t_span, t_step, params)
+print(f"Метод Эйлера: {time.time() - start:.4f} сек")
+
+start = time.time()
+_, _ = rk4_method(seir_d_model, initial_conditions, t_span, t_step, params)
+print(f"Метод РК4: {time.time() - start:.4f} сек")
+
+start = time.time()
+_ = solve_ivp(seir_d_model, t_span, initial_conditions, args=(params,),
+              method='RK45', t_eval=np.arange(t_span[0], t_span[1] + 1, 1))
+print(f"solve_ivp (RK45): {time.time() - start:.4f} сек")
+
+# Критерии оценки модели SEIR-D
+# Добавим проверку адекватности модели
+
+print("\n=== Оценка адекватности модели SEIR-D ===")
+
+# 1. Проверка сохранения общей численности населения
+total_pop = y_rk4[:, 0] + y_rk4[:, 1] + y_rk4[:, 2] + y_rk4[:, 3] + y_rk4[:, 4]
+pop_error = np.max(np.abs(total_pop - N))
+print(f"Максимальное отклонение от общей численности: {pop_error:.2f} чел ({pop_error/N*100:.4f}%)")
+
+# 2. Проверка биологического смысла (неотрицательность)
+negative_values = np.any(y_rk4 < 0, axis=0)
+print("Наличие отрицательных значений по группам:",
+      {group: neg for group, neg in zip(groups, negative_values)})
+
+# 3. Анализ устойчивости решения при изменении шага
+print("\nАнализ устойчивости при изменении шага:")
+for step in [0.5, 0.1, 0.01]:
+    t_rk4_step, y_rk4_step = rk4_method(seir_d_model, initial_conditions, t_span, step, params)
+    y_interp = np.interp(sol.t, t_rk4_step, y_rk4_step[:, 2])  # Берем Infected для сравнения
+    error = np.mean(np.abs(sol.y[2] - y_interp))
+    print(f"Шаг {step}: средняя ошибка = {error:.4f}")
